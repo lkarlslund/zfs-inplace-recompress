@@ -29,4 +29,4 @@ function BuildVariants {
 Set-Location $PSScriptRoot
 
 # Release
-BuildVariants -ldflags "$LDFLAGS -s" -prefix zfs-inplace-recompress -path . -arch @("386", "amd64", "arm64") -os @("linux", "darwin", "freebsd", "netbsd", "openbsd", "solaris")
+BuildVariants -ldflags "$LDFLAGS -s" -prefix zfs-inplace-recompress -path . -arch @("amd64", "arm64") -os @("linux", "darwin", "freebsd", "netbsd", "openbsd", "solaris")
