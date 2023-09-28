@@ -9,17 +9,17 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/bmatcuk/doublestar"
 	"github.com/dgraph-io/badger/v3"
 	"github.com/spf13/pflag"
 )
 
 var debugflag, noresume *bool
-var ignorelist *[]string = &[]string{
+var ignorelist = []string{
 	// Compressed images
 	"jpg",
 	"jpeg",
@@ -75,8 +75,8 @@ func debug(format string, args ...interface{}) {
 }
 
 func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
-	for _, pattern := range *ignorelist {
-		if skip, err := doublestar.Match(pattern, fp); err == nil && skip {
+	for _, suffix := range ignorelist {
+		if strings.HasSuffix(strings.ToLower(fp), suffix) {
 			// Skip
 			debug("Skipping ignored file %s", fp)
 			return nil
@@ -172,13 +172,14 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 }
 
 func main() {
-	ignorelist = pflag.StringSlice("ignore", *ignorelist, "Ignore files with these extensions")
+	ignore := pflag.String("ignore", strings.Join(ignorelist, ","), "Ignore files with these extensions")
 	debugflag = pflag.Bool("debug", false, "Debug mode")
 	noresume = pflag.Bool("noresume", false, "Dont create or use the resume database")
 	pflag.Parse()
 
-	for i, pattern := range *ignorelist {
-		(*ignorelist)[i] = "." + pattern
+	ignorelist = []string{}
+	for _, pattern := range strings.Split(*ignore, ",") {
+		ignorelist = append(ignorelist, "."+strings.ToLower(pattern))
 	}
 
 	var db *badger.DB
