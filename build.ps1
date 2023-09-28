@@ -11,6 +11,7 @@ function BuildVariants {
 
   foreach ($currentarch in $arch) {
     foreach ($currentos in $os) {
+      Write-Output "Building $prefix-$currentos-$currentarch$suffix"
       $env:GOARCH = $currentarch
       $env:GOOS = $currentos
       $outputfile = "binaries/$prefix-$currentos-$currentarch$suffix"

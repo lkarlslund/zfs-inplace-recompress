@@ -93,7 +93,7 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		return fmt.Errorf("unknown file type %T", s.Sys())
 	}
 
-	if stat.Blksize*stat.Blocks*12 < stat.Size*10 { // If file is already compressed 1.2:1 then skip it
+	if int64(stat.Blksize)*int64(stat.Blocks)*12 < int64(stat.Size)*10 { // If file is already compressed 1.2:1 then skip it
 		// Already compressed or sparse, skip
 		debug("Skipping already compressed or sparse file %s", fp)
 		return nil
