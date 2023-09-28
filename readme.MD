@@ -25,11 +25,15 @@ How do I use this:
 ```
 # zfs get compression
 NAME             PROPERTY     VALUE           SOURCE
-myfilesystem     compression  lz4             local
+myfilesystem     compression  off             local
 
 # zfs get compressratio
 NAME             PROPERTY       VALUE  SOURCE
 myfilesystem     compressratio  1.00x  -
+
+# zfs set compression=lz4 myfilesystem
+NAME             PROPERTY     VALUE           SOURCE
+myfilesystem     compression  lz4             local
 
 # cd /myfilesystem
 

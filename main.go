@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/spf13/pflag"
@@ -83,17 +82,17 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		}
 	}
 
-	s, err := fi.Info()
+	fileinfo, err := fi.Info()
 	if err != nil {
 		return err
 	}
 
-	stat, ok := s.Sys().(*syscall.Stat_t)
+	sysstat, ok := fileinfo.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("unknown file type %T", s.Sys())
+		return fmt.Errorf("unknown file type %T", fileinfo.Sys())
 	}
 
-	if int64(stat.Blksize)*int64(stat.Blocks)*12 < int64(stat.Size)*10 { // If file is already compressed 1.2:1 then skip it
+	if int64(sysstat.Blksize)*int64(sysstat.Blocks)*12 < int64(sysstat.Size)*10 { // If file is already compressed 1.2:1 then skip it
 		// Already compressed or sparse, skip
 		debug("Skipping already compressed or sparse file %s", fp)
 		return nil
@@ -104,7 +103,7 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 	if db != nil {
 		err = db.View(func(txn *badger.Txn) error {
 			b := make([]byte, 8)
-			binary.LittleEndian.PutUint64(b, uint64(stat.Ino))
+			binary.LittleEndian.PutUint64(b, uint64(sysstat.Ino))
 			item, err := txn.Get(b)
 			if err == nil {
 				err = item.Value(func(val []byte) error {
@@ -147,12 +146,12 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 	target.Close()
 	source.Close()
 
-	if copied != stat.Size {
-		return fmt.Errorf("copied %d bytes instead of %d", copied, stat.Size)
+	if copied != sysstat.Size {
+		return fmt.Errorf("copied %d bytes instead of %d", copied, sysstat.Size)
 	}
 
 	// Set the last modified timestamp to the original
-	err = os.Chtimes(fp, time.Unix(stat.Atim.Sec, stat.Atim.Nsec), time.Unix(stat.Mtim.Sec, stat.Mtim.Nsec))
+	err = os.Chtimes(fp, fileinfo.ModTime(), fileinfo.ModTime())
 	if err != nil {
 		return err
 	}
@@ -162,7 +161,7 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		err = db.Update(func(txn *badger.Txn) error {
 			// Set the key-value pair in the database.
 			b := make([]byte, 8)
-			binary.LittleEndian.PutUint64(b, uint64(stat.Ino))
+			binary.LittleEndian.PutUint64(b, uint64(sysstat.Ino))
 			err := txn.Set(b, []byte("handled"))
 			return err
 		})
@@ -208,6 +207,7 @@ func main() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
 		<-c
+		log("Terminating, please wait for threads to finish tasks ...")
 		abort = true
 	}()
 
