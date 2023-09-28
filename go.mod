@@ -2,7 +2,10 @@ module github.com/lkarlslund/zfs-inplace-recompress
 
 go 1.21.1
 
+require github.com/spf13/pflag v1.0.5
+
 require (
+	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/dgraph-io/badger/v3 v3.2103.5 // indirect
