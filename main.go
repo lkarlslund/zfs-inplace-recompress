@@ -31,13 +31,14 @@ var ignorelist = []string{
 	"bz2",
 	"xz",
 	"7z",
+	"z77",
 	"rar",
 	// Compressed video files
-	"mp4",
-	"avi",
-	"mkv",
-	"flv",
-	"webm",
+	"mp4",  //
+	"avi",  //
+	"mkv",  // matroska video
+	"flv",  // flv video
+	"webm", // webm video
 	// Compressed audio files
 	"mp3",
 	"wav",
@@ -59,12 +60,13 @@ var ignorelist = []string{
 	"odc",
 	"odm",
 	"odt",
+	"ncf", // netcdf
+	"deb", // debian package
+
 }
 
 func log(format string, args ...interface{}) {
-	if *debugflag {
-		fmt.Printf(format+"\n", args...)
-	}
+	fmt.Printf(format+"\n", args...)
 }
 
 func debug(format string, args ...interface{}) {
@@ -90,12 +92,6 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 	sysstat, ok := fileinfo.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("unknown file type %T", fileinfo.Sys())
-	}
-
-	if int64(sysstat.Blksize)*int64(sysstat.Blocks)*12 < int64(sysstat.Size)*10 { // If file is already compressed 1.2:1 then skip it
-		// Already compressed or sparse, skip
-		debug("Skipping already compressed or sparse file %s", fp)
-		return nil
 	}
 
 	// See if the inode has been handled already
@@ -124,6 +120,12 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		return err
 	}
 	if skip {
+		return nil
+	}
+
+	if int64(sysstat.Blocks)*512*12 < int64(sysstat.Size)*10 { // If file is already compressed 1.2:1 then skip it
+		// Already compressed or sparse, skip
+		debug("Skipping already compressed or sparse file %s", fp)
 		return nil
 	}
 
