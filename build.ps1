@@ -11,6 +11,11 @@ function BuildVariants {
 
   foreach ($currentarch in $arch) {
     foreach ($currentos in $os) {
+      # skip if 'go tool dist list' does not output the $currentos/$currentarch
+      if (-Not (go tool dist list | Select-String -SimpleMatch "$currentos/$currentarch")) {
+        continue
+      }
+
       Write-Output "Building $prefix-$currentos-$currentarch$suffix"
       $env:GOARCH = $currentarch
       $env:GOOS = $currentos
@@ -30,4 +35,4 @@ function BuildVariants {
 Set-Location $PSScriptRoot
 
 # Release
-BuildVariants -ldflags "$LDFLAGS -s" -prefix zfs-inplace-recompress -path . -arch @("amd64", "arm64") -os @("linux", "darwin", "freebsd", "netbsd", "openbsd", "solaris")
+BuildVariants -ldflags "$LDFLAGS -s" -prefix zfs-inplace-recompress -path . -arch @("arm64", "amd64") -os @("darwin", "freebsd", "netbsd", "openbsd", "solaris", "linux")
