@@ -11,13 +11,19 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/spf13/pflag"
 )
 
+var totalfiles, totalbytes atomic.Uint64
+var skipfiles, skipbytes atomic.Uint64
+
+var minfilesize *int64
 var debugflag, noresume *bool
+var skipratio *float64
 var ignorelist = []string{
 	// Compressed images
 	"jpg",
@@ -75,18 +81,27 @@ func debug(format string, args ...interface{}) {
 	}
 }
 
-func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
+func processfile(fp string, fi os.DirEntry, db *badger.DB, buffer []byte) error {
+	fileinfo, err := fi.Info()
+	if err != nil {
+		return err
+	}
+
+	if fileinfo.Size() <= *minfilesize {
+		debug("Skipping too small file %s", fp)
+		skipfiles.Add(1)
+		skipbytes.Add(uint64(fileinfo.Size()))
+		return nil
+	}
+
 	for _, suffix := range ignorelist {
 		if strings.HasSuffix(strings.ToLower(fp), suffix) {
 			// Skip
 			debug("Skipping ignored file %s", fp)
+			skipfiles.Add(1)
+			skipbytes.Add(uint64(fileinfo.Size()))
 			return nil
 		}
-	}
-
-	fileinfo, err := fi.Info()
-	if err != nil {
-		return err
 	}
 
 	sysstat, ok := fileinfo.Sys().(*syscall.Stat_t)
@@ -105,6 +120,8 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 				err = item.Value(func(val []byte) error {
 					if string(val) == "handled" {
 						debug("Skipping handled file %s", fp)
+						skipfiles.Add(1)
+						skipbytes.Add(uint64(fileinfo.Size()))
 						skip = true
 					}
 					return nil
@@ -123,14 +140,23 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		return nil
 	}
 
-	if int64(sysstat.Blocks)*512*12 < int64(sysstat.Size)*10 { // If file is already compressed 1.2:1 then skip it
+	if *skipratio != 0 && float64(sysstat.Blocks)*512*(*skipratio) < float64(fileinfo.Size()) { // If file is already compressed 1.2:1 then skip it
 		// Already compressed or sparse, skip
 		debug("Skipping already compressed or sparse file %s", fp)
+		skipfiles.Add(1)
+		skipbytes.Add(uint64(fileinfo.Size()))
+		return nil
+	}
+
+	if fileinfo.Size() == 0 {
+		debug("Skipping zero bytes file %s", fp)
+		skipfiles.Add(1)
+		skipbytes.Add(uint64(fileinfo.Size()))
 		return nil
 	}
 
 	// Process the file
-	debug("Processing file %s", fp)
+	debug("Processing file %s with size %v bytes (uses %v bytes)", fp, fileinfo.Size(), sysstat.Blocks*512)
 
 	source, err := os.Open(fp)
 	if err != nil {
@@ -141,7 +167,7 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		return err
 	}
 	// Copy from source to target
-	copied, err := io.Copy(target, source)
+	copied, err := io.CopyBuffer(target, source, buffer)
 	if err != nil {
 		return err
 	}
@@ -169,6 +195,9 @@ func processfile(fp string, fi os.DirEntry, db *badger.DB) error {
 		})
 	}
 
+	totalfiles.Add(1)
+	totalbytes.Add(uint64(fileinfo.Size()))
+
 	return err
 }
 
@@ -176,6 +205,10 @@ func main() {
 	ignore := pflag.String("ignore", strings.Join(ignorelist, ","), "Ignore files with these extensions")
 	debugflag = pflag.Bool("debug", false, "Debug mode")
 	noresume = pflag.Bool("noresume", false, "Dont create or use the resume database")
+	skipratio = pflag.Float64("skipratio", 1.5, "Skip files that are already compressed more than this ratio (1.5:1 default, 0 = dont skip)")
+	minfilesize = pflag.Int64("minfilesize", 16384, "Minimum filesize to process")
+	threads := pflag.Int32("threads", int32(runtime.NumCPU()*2), "Number of parallel file IO threads")
+	buffersize := pflag.Int32("buffersize", 16*1024*1024, "Buffer size per thread for IO")
 	pflag.Parse()
 
 	ignorelist = []string{}
@@ -200,7 +233,7 @@ func main() {
 		fi os.DirEntry
 	}
 
-	filequeue := make(chan queueItem, runtime.NumCPU()*2)
+	filequeue := make(chan queueItem, *threads)
 
 	var abort bool
 
@@ -218,8 +251,9 @@ func main() {
 	for i := 0; i < runtime.NumCPU(); i++ {
 		workers.Add(1)
 		go func() {
+			buffer := make([]byte, *buffersize)
 			for item := range filequeue {
-				err := processfile(item.fp, item.fi, db)
+				err := processfile(item.fp, item.fi, db, buffer)
 				if err != nil {
 					log("Error processing file %s: %v", item.fp, err)
 					globalerror = true
@@ -229,7 +263,7 @@ func main() {
 		}()
 	}
 
-	err = filepath.WalkDir(".", func(fp string, fi os.DirEntry, err error) error {
+	err = filepath.WalkDir(".", func(fp string, di os.DirEntry, err error) error {
 		if globalerror {
 			return errors.New("Aborted due to global error")
 		}
@@ -242,9 +276,9 @@ func main() {
 			return nil // but continue walking elsewhere
 		}
 
-		if fi.Type().IsRegular() {
+		if di.Type().IsRegular() {
 			// Find the file inode
-			filequeue <- queueItem{fp, fi}
+			filequeue <- queueItem{fp, di}
 		}
 		return nil
 	})
@@ -256,6 +290,9 @@ func main() {
 		db.Close()
 	}
 
+	log("Processed %v files, %v bytes", totalfiles.Load(), totalbytes.Load())
+	log("Skipped %v files, %v bytes", skipfiles.Load(), skipbytes.Load())
+
 	if err != nil {
 		log("Error walking directory: %v", err)
 		os.Exit(1)
@@ -264,4 +301,5 @@ func main() {
 			os.RemoveAll(".zfs-inplace-recompress-resume")
 		}
 	}
+
 }
